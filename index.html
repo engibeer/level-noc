@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Live Spectrum</title> 
+        <script type="text/javascript" src="/static/jquery.js"></script> 
+        <script type="text/javascript" src="/static/socket.io.js"></script> 
+        <script type="text/javascript" src="/static/three.js"></script> 
+        <script type="text/javascript" src="/static/TrackballControls.js"></script> 
+		<meta charset="utf-8">
+		<style>
+			body {
+				margin: 0px;
+				background-color: #000000;
+				overflow: hidden;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="container">
+		</div>
+	</body>
+		<script>
+		$(function() {
+
+			// Socket.io specific code
+		    var socket = io.connect('http://127.0.0.1');
+
+			var camera, scene, renderer;
+			var time = 0;
+			var size = 1024, step = 16;
+			var cube_size = 8;
+			var slowness = 5; // higher is slower
+			var arr_len = size / step;
+			var clock = new THREE.Clock();
+			var materials = new Array(256);
+
+			cubes = new Array(arr_len);
+
+		    // setup 2D FFT data array and zero-fill
+		    var len = size;
+		    var fft_size = 1024;
+		    fft_data = new Array(len);
+		    while(--len >= 0){
+		        var local_len = fft_size;
+		        fft_data[len] = new Array(fft_size);
+		        while(--local_len >= 0){
+		            fft_data[len][local_len] = 0;
+		        }
+		    }
+
+		    // Update the graph when we get new data from the server
+		    var counter = 0;
+		    socket.on('fft_data', function(data) {
+		        data = JSON.parse(data);
+
+		        // add to front, remove from back
+		        counter++;
+		        if(counter % slowness == 0){
+		        	fft_data.unshift(data.fft);
+		        	fft_data.pop();
+		        	update_cubes();
+		        	counter = 0;
+		    	}
+		    });
+
+			init();
+			animate();
+
+			function init() {
+				// get the DOM element to attach to
+				var container = $('#container');
+
+				// Camera
+				camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 1, 4000 );
+				camera.position.y = 150;
+				camera.position.z = 500;
+				scene = new THREE.Scene();
+				scene.add(camera);
+				camera.position.z = 800;
+
+				// Renderer
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.append(renderer.domElement);
+
+				// Lighting
+				var pointLight = new THREE.PointLight(0xFFFFFF);
+				pointLight.position.x = 10;
+				pointLight.position.y = 50;
+				pointLight.position.z = 400;
+				scene.add(pointLight);
+
+				// Controls
+				controls = new THREE.TrackballControls( camera, renderer.domElement );
+
+				// Meshing algorithm
+				// Naive method, generate cube for every point
+
+				// Precalculate materials for colors
+				var color = 0xFF0000;
+				for(var c = 0; c < 256; c++){
+					materials[c] = new THREE.MeshLambertMaterial( { color: color, shading: THREE.FlatShading } )
+					color += 0x000100;
+				}
+
+				geometry = new THREE.CubeGeometry(cube_size, cube_size, cube_size);
+				geometry.colorsNeedUpdate = true;
+
+				arr_i = 0, arr_j = 0;
+				// y axis
+				for ( var i = size; i >= 0; i -= step ) {
+					cubes[arr_i] = new Array(arr_len);
+					arr_j = 0;
+					// x axis
+					for( var j = 0; j <= size; j += step ){
+						var y = Math.random()*64;
+						var mat_color = materials[Math.floor(y)];
+						cube = new THREE.Mesh( geometry, mat_color );
+						cube.position.x = j - size / 2;
+						cube.position.z = i - size / 2;
+						cube.position.y = y;
+						cubes[arr_i][arr_j] = cube;
+						scene.add(cube)
+						arr_j++;
+					}
+					arr_i++;
+				}
+
+				// Draw
+				renderer.render(scene, camera);
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+
+			function animate() {
+				requestAnimationFrame( animate );
+				render();
+			}
+
+			function render(){
+				var delta = clock.getDelta();
+				time += delta * 0.5;
+				controls.update( delta );
+
+				renderer.render( scene, camera );
+			}
+
+			function update_cubes(){
+				// update all cube positions
+				for(var row = arr_len; row >= 0; row-- ){
+					for(var cube_i = 0; cube_i <= arr_len; cube_i++){
+						var new_y = fft_data[row][cube_i];
+						var mat_color = materials[Math.floor(new_y)];
+						cubes[row][cube_i].position.y = new_y;
+						cubes[row][cube_i].material = mat_color;
+					}
+				}
+			}
+		});
+		</script>
+	</body>
+</html>
